@@ -67,7 +67,7 @@ final class BLEManager: NSObject, ObservableObject {
         connectionState = .capturing
         progress = 0
         lastTransferInfo = "Sending SNAP command..."
-        p.writeValue(Data([kCmdSnap]), for: ctrl, type: .withResponse)
+        p.writeValue(Data([kCmdSnap]), for: ctrl, type: .withoutResponse)
     }
 }
 
