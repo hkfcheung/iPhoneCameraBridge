@@ -56,9 +56,17 @@ final class BLEManager: NSObject, ObservableObject {
     }
 
     func requestSnapshot() {
-        guard let ctrl = controlChar, let p = peripheral else { return }
+        guard let p = peripheral else {
+            lastTransferInfo = "Error: no peripheral"
+            return
+        }
+        guard let ctrl = controlChar else {
+            lastTransferInfo = "Error: CONTROL characteristic not found"
+            return
+        }
         connectionState = .capturing
         progress = 0
+        lastTransferInfo = "Sending SNAP command..."
         p.writeValue(Data([kCmdSnap]), for: ctrl, type: .withResponse)
     }
 }
@@ -112,19 +120,27 @@ extension BLEManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral,
                     didDiscoverCharacteristicsFor service: CBService,
                     error: Error?) {
-        guard let chars = service.characteristics else { return }
+        guard let chars = service.characteristics else {
+            lastTransferInfo = "Error: no characteristics found"
+            return
+        }
+        var found: [String] = []
         for c in chars {
             switch c.uuid {
             case kControlUUID:
                 controlChar = c
+                found.append("CONTROL")
             case kStatusUUID:
                 peripheral.setNotifyValue(true, for: c)
+                found.append("STATUS")
             case kImageUUID:
                 peripheral.setNotifyValue(true, for: c)
+                found.append("IMAGE")
             default:
-                break
+                found.append("unknown:\(c.uuid)")
             }
         }
+        lastTransferInfo = "Found: \(found.joined(separator: ", "))"
         connectionState = .ready
     }
 
