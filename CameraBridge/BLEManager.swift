@@ -158,56 +158,75 @@ extension BLEManager: CBPeripheralDelegate {
         }
     }
 
+    private var chunkCount = 0
+
     private func handleStatusUpdate(_ data: Data) {
         guard let raw = data.first else { return }
-        // Map ESP BleSnapState enum values
-        switch raw {
-        case 0: connectionState = .disconnected
-        case 1: connectionState = .ready
-        case 2: connectionState = .capturing
-        case 3: connectionState = .receiving
-        case 4: connectionState = .error
-        default: break
+        lastTransferInfo = "STATUS: \(raw)"
+        // Don't override connectionState during image transfer
+        if raw == 1 && connectionState != .receiving {
+            connectionState = .ready
+        } else if raw == 2 {
+            connectionState = .capturing
+        } else if raw == 3 {
+            connectionState = .receiving
+        } else if raw == 4 {
+            connectionState = .error
         }
     }
 
     private func handleImageChunk(_ data: Data) {
-        guard data.count >= 16 else { return }
+        chunkCount += 1
+        lastTransferInfo = "Chunk #\(chunkCount), \(data.count) bytes"
 
-        // Parse 16-byte ChunkHeader (little-endian, matching ESP32)
+        guard data.count >= 16 else {
+            lastTransferInfo = "Chunk too small: \(data.count) bytes"
+            return
+        }
+
         let frameId:   UInt16 = data.withUnsafeBytes { $0.load(fromByteOffset: 0,  as: UInt16.self) }
         let offset:    UInt32 = data.withUnsafeBytes { $0.load(fromByteOffset: 2,  as: UInt32.self) }
         let length:    UInt16 = data.withUnsafeBytes { $0.load(fromByteOffset: 6,  as: UInt16.self) }
         let totalSize: UInt32 = data.withUnsafeBytes { $0.load(fromByteOffset: 8,  as: UInt32.self) }
         let flags:     UInt8  = data.withUnsafeBytes { $0.load(fromByteOffset: 12, as: UInt8.self) }
 
-        let payload = data.subdata(in: 16 ..< 16 + Int(length))
+        lastTransferInfo = "Chunk #\(chunkCount) off=\(offset) len=\(length) total=\(totalSize) flags=\(flags)"
 
-        // First chunk of a new frame — reset buffer
+        let payloadEnd = 16 + Int(length)
+        guard data.count >= payloadEnd else {
+            lastTransferInfo = "Chunk data too short: have \(data.count), need \(payloadEnd)"
+            return
+        }
+        let payload = data.subdata(in: 16 ..< payloadEnd)
+
         if flags & kFlagFirst != 0 {
             imageBuffer = Data()
             expectedSize = totalSize
             currentFrameId = frameId
+            chunkCount = 1
             connectionState = .receiving
         }
 
-        // Append payload at correct offset
         if imageBuffer.count == Int(offset) {
             imageBuffer.append(payload)
+        } else {
+            lastTransferInfo = "Gap! buf=\(imageBuffer.count) off=\(offset)"
         }
 
-        // Update progress
         if expectedSize > 0 {
             progress = Double(imageBuffer.count) / Double(expectedSize)
         }
 
-        // Last chunk — assemble image
         if flags & kFlagLast != 0 {
+            lastTransferInfo = "Complete! \(imageBuffer.count)/\(totalSize) bytes"
             if let img = UIImage(data: imageBuffer) {
                 snapshotImage = img
-                lastTransferInfo = String(format: "Frame %d: %.1f KB",
+                lastTransferInfo = String(format: "Frame %d: %.1f KB (%d chunks)",
                                           currentFrameId,
-                                          Double(imageBuffer.count) / 1024.0)
+                                          Double(imageBuffer.count) / 1024.0,
+                                          chunkCount)
+            } else {
+                lastTransferInfo = "JPEG decode failed! \(imageBuffer.count) bytes"
             }
             progress = 1.0
             connectionState = .ready
