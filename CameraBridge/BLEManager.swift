@@ -176,57 +176,41 @@ extension BLEManager: CBPeripheralDelegate {
 
     private func handleImageChunk(_ data: Data) {
         chunkCount += 1
-        lastTransferInfo = "Chunk #\(chunkCount), \(data.count) bytes"
 
-        guard data.count >= 16 else {
-            lastTransferInfo = "Chunk too small: \(data.count) bytes"
+        guard data.count > 16 else {
+            lastTransferInfo = "Chunk #\(chunkCount) too small: \(data.count)b"
             return
         }
 
-        // Read little-endian fields manually (packed struct has unaligned UInt32)
-        let frameId:   UInt16 = UInt16(data[0]) | (UInt16(data[1]) << 8)
-        let offset:    UInt32 = UInt32(data[2]) | (UInt32(data[3]) << 8) | (UInt32(data[4]) << 16) | (UInt32(data[5]) << 24)
-        let length:    UInt16 = UInt16(data[6]) | (UInt16(data[7]) << 8)
-        let totalSize: UInt32 = UInt32(data[8]) | (UInt32(data[9]) << 8) | (UInt32(data[10]) << 16) | (UInt32(data[11]) << 24)
-        let flags:     UInt8  = data[12]
+        let flags: UInt8 = data[12]
 
-        lastTransferInfo = "Chunk #\(chunkCount) off=\(offset) len=\(length) total=\(totalSize) flags=\(flags)"
-
-        let payloadEnd = 16 + Int(length)
-        guard data.count >= payloadEnd else {
-            lastTransferInfo = "Chunk data too short: have \(data.count), need \(payloadEnd)"
-            return
-        }
-        let payload = data.subdata(in: 16 ..< payloadEnd)
-
+        // First chunk: reset buffer
         if flags & kFlagFirst != 0 {
             imageBuffer = Data()
-            expectedSize = totalSize
-            currentFrameId = frameId
             chunkCount = 1
             connectionState = .receiving
         }
 
-        if imageBuffer.count == Int(offset) {
-            imageBuffer.append(payload)
-        } else {
-            lastTransferInfo = "Gap! buf=\(imageBuffer.count) off=\(offset)"
+        // Always append everything after the 16-byte header
+        let payload = data.subdata(in: 16 ..< data.count)
+        imageBuffer.append(payload)
+
+        let totalSize = UInt32(data[8]) | (UInt32(data[9]) << 8) | (UInt32(data[10]) << 16) | (UInt32(data[11]) << 24)
+        if totalSize > 0 {
+            progress = Double(imageBuffer.count) / Double(totalSize)
         }
 
-        if expectedSize > 0 {
-            progress = Double(imageBuffer.count) / Double(expectedSize)
-        }
+        lastTransferInfo = "Chunk #\(chunkCount): \(imageBuffer.count)/\(totalSize) bytes"
 
+        // Last chunk: assemble image
         if flags & kFlagLast != 0 {
-            lastTransferInfo = "Complete! \(imageBuffer.count)/\(totalSize) bytes"
             if let img = UIImage(data: imageBuffer) {
                 snapshotImage = img
-                lastTransferInfo = String(format: "Frame %d: %.1f KB (%d chunks)",
-                                          currentFrameId,
+                lastTransferInfo = String(format: "%.1f KB (%d chunks)",
                                           Double(imageBuffer.count) / 1024.0,
                                           chunkCount)
             } else {
-                lastTransferInfo = "JPEG decode failed! \(imageBuffer.count) bytes"
+                lastTransferInfo = "JPEG failed! \(imageBuffer.count)/\(totalSize)b, chunks=\(chunkCount)"
             }
             progress = 1.0
             connectionState = .ready
