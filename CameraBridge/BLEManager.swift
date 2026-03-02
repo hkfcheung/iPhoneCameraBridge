@@ -68,15 +68,8 @@ final class BLEManager: NSObject, ObservableObject {
         }
         connectionState = .capturing
         progress = 0
-        let props = ctrl.properties
-        lastTransferInfo = "Props: W=\(props.contains(.write)) WNR=\(props.contains(.writeWithoutResponse))"
-        if props.contains(.write) {
-            p.writeValue(Data([kCmdSnap]), for: ctrl, type: .withResponse)
-        } else if props.contains(.writeWithoutResponse) {
-            p.writeValue(Data([kCmdSnap]), for: ctrl, type: .withoutResponse)
-        } else {
-            lastTransferInfo = "Error: CONTROL not writable! props=\(props.rawValue)"
-        }
+        lastTransferInfo = "Reading CONTROL to trigger snap..."
+        p.readValue(for: ctrl)
     }
 }
 
@@ -151,17 +144,6 @@ extension BLEManager: CBPeripheralDelegate {
         }
         lastTransferInfo = "Found: \(found.joined(separator: ", "))"
         connectionState = .ready
-    }
-
-    func peripheral(_ peripheral: CBPeripheral,
-                    didWriteValueFor characteristic: CBCharacteristic,
-                    error: Error?) {
-        if let error = error {
-            lastTransferInfo = "Write error: \(error.localizedDescription)"
-            connectionState = .ready
-        } else {
-            lastTransferInfo = "SNAP write OK, waiting for image..."
-        }
     }
 
     func peripheral(_ peripheral: CBPeripheral,
