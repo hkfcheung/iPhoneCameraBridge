@@ -38,6 +38,7 @@ final class BLEManager: NSObject, ObservableObject {
     private var imageBuffer = Data()
     private var expectedSize: UInt32 = 0
     private var currentFrameId: UInt16 = 0
+    private var chunkCount = 0
 
     override init() {
         super.init()
@@ -157,8 +158,6 @@ extension BLEManager: CBPeripheralDelegate {
             handleImageChunk(data)
         }
     }
-
-    private var chunkCount = 0
 
     private func handleStatusUpdate(_ data: Data) {
         guard let raw = data.first else { return }
