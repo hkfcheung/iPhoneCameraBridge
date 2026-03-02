@@ -184,11 +184,12 @@ extension BLEManager: CBPeripheralDelegate {
             return
         }
 
-        let frameId:   UInt16 = data.withUnsafeBytes { $0.load(fromByteOffset: 0,  as: UInt16.self) }
-        let offset:    UInt32 = data.withUnsafeBytes { $0.load(fromByteOffset: 2,  as: UInt32.self) }
-        let length:    UInt16 = data.withUnsafeBytes { $0.load(fromByteOffset: 6,  as: UInt16.self) }
-        let totalSize: UInt32 = data.withUnsafeBytes { $0.load(fromByteOffset: 8,  as: UInt32.self) }
-        let flags:     UInt8  = data.withUnsafeBytes { $0.load(fromByteOffset: 12, as: UInt8.self) }
+        // Read little-endian fields manually (packed struct has unaligned UInt32)
+        let frameId:   UInt16 = UInt16(data[0]) | (UInt16(data[1]) << 8)
+        let offset:    UInt32 = UInt32(data[2]) | (UInt32(data[3]) << 8) | (UInt32(data[4]) << 16) | (UInt32(data[5]) << 24)
+        let length:    UInt16 = UInt16(data[6]) | (UInt16(data[7]) << 8)
+        let totalSize: UInt32 = UInt32(data[8]) | (UInt32(data[9]) << 8) | (UInt32(data[10]) << 16) | (UInt32(data[11]) << 24)
+        let flags:     UInt8  = data[12]
 
         lastTransferInfo = "Chunk #\(chunkCount) off=\(offset) len=\(length) total=\(totalSize) flags=\(flags)"
 
