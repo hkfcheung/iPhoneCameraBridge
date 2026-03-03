@@ -5,15 +5,28 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            // Connection status
+            // Connection status + auto count
             HStack {
                 Circle()
                     .fill(statusColor)
                     .frame(width: 12, height: 12)
                 Text(ble.connectionState.rawValue)
                     .font(.headline)
+                Spacer()
+                if ble.autoSnapshotCount > 0 {
+                    Text("Auto: \(ble.autoSnapshotCount)")
+                        .font(.caption)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.orange.opacity(0.2))
+                        .cornerRadius(8)
+                }
+                if ble.uploadState != .idle {
+                    uploadBadge
+                }
             }
             .padding(.top)
+            .padding(.horizontal)
 
             // Snapshot image
             if let image = ble.snapshotImage {
@@ -89,6 +102,30 @@ struct ContentView: View {
 
     private var isReady: Bool {
         ble.connectionState == .ready
+    }
+
+    private var uploadBadge: some View {
+        HStack(spacing: 4) {
+            if ble.uploadState == .uploading {
+                ProgressView()
+                    .scaleEffect(0.7)
+            }
+            Text(ble.uploadState.rawValue)
+                .font(.caption2)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(uploadBadgeColor.opacity(0.2))
+        .cornerRadius(8)
+    }
+
+    private var uploadBadgeColor: Color {
+        switch ble.uploadState {
+        case .uploading: return .blue
+        case .success:   return .green
+        case .failed:    return .red
+        case .idle:      return .clear
+        }
     }
 
     private var statusColor: Color {

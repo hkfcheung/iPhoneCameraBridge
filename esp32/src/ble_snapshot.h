@@ -13,6 +13,7 @@
 // Chunk header flags
 #define FLAG_FIRST  0x01
 #define FLAG_LAST   0x02
+#define FLAG_AUTO   0x04
 
 enum class BleSnapState : uint8_t {
     IDLE,       // not connected, advertising
@@ -35,3 +36,5 @@ static_assert(sizeof(ChunkHeader) == 16, "ChunkHeader must be 16 bytes");
 
 void bleSnapshotInit();
 void bleSnapshotLoop();
+void bleSnapshotTriggerAuto();
+bool bleSnapshotBusy();

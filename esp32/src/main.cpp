@@ -3,6 +3,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include "ble_snapshot.h"
+#include "face_detect.h"
 
 // ===================
 // WiFi Credentials
@@ -200,10 +201,14 @@ void setup() {
 
   // BLE snapshot service
   bleSnapshotInit();
+
+  // Face detection (auto-snapshot)
+  faceDetectInit();
 }
 
 void loop() {
   checkButton();
   server.handleClient();
   bleSnapshotLoop();
+  faceDetectLoop();
 }

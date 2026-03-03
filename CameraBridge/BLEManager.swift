@@ -13,6 +13,10 @@ private let kImageUUID    = CBUUID(string: "19B10003-E8F2-537E-4F6C-D104768A1214
 private let kCmdSnap: UInt8 = 0x01
 private let kFlagFirst: UInt8 = 0x01
 private let kFlagLast:  UInt8 = 0x02
+private let kFlagAuto:  UInt8 = 0x04
+
+// PicoClaw gateway URL — update to your actual endpoint
+private let kPicoClawURL = "https://your-picoclaw-gateway.example.com/upload"
 
 enum ConnectionState: String {
     case disconnected = "Disconnected"
@@ -24,11 +28,20 @@ enum ConnectionState: String {
     case error        = "Error"
 }
 
+enum UploadState: String {
+    case idle       = ""
+    case uploading  = "Uploading..."
+    case success    = "Uploaded"
+    case failed     = "Upload failed"
+}
+
 final class BLEManager: NSObject, ObservableObject {
     @Published var connectionState: ConnectionState = .disconnected
     @Published var snapshotImage: UIImage?
     @Published var progress: Double = 0
     @Published var lastTransferInfo: String = ""
+    @Published var uploadState: UploadState = .idle
+    @Published var autoSnapshotCount: Int = 0
 
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
@@ -39,6 +52,7 @@ final class BLEManager: NSObject, ObservableObject {
     private var expectedSize: UInt32 = 0
     private var currentFrameId: UInt16 = 0
     private var chunkCount = 0
+    private var isAutoSnapshot = false
 
     override init() {
         super.init()
@@ -184,10 +198,11 @@ extension BLEManager: CBPeripheralDelegate {
 
         let flags: UInt8 = data[12]
 
-        // First chunk: reset buffer
+        // First chunk: reset buffer and detect auto flag
         if flags & kFlagFirst != 0 {
             imageBuffer = Data()
             chunkCount = 1
+            isAutoSnapshot = (flags & kFlagAuto) != 0
             connectionState = .receiving
         }
 
@@ -200,20 +215,67 @@ extension BLEManager: CBPeripheralDelegate {
             progress = Double(imageBuffer.count) / Double(totalSize)
         }
 
-        lastTransferInfo = "Chunk #\(chunkCount): \(imageBuffer.count)/\(totalSize) bytes"
+        let prefix = isAutoSnapshot ? "[AUTO] " : ""
+        lastTransferInfo = "\(prefix)Chunk #\(chunkCount): \(imageBuffer.count)/\(totalSize) bytes"
 
         // Last chunk: assemble image
         if flags & kFlagLast != 0 {
             if let img = UIImage(data: imageBuffer) {
                 snapshotImage = img
-                lastTransferInfo = String(format: "%.1f KB (%d chunks)",
+                lastTransferInfo = String(format: "%@%.1f KB (%d chunks)",
+                                          prefix,
                                           Double(imageBuffer.count) / 1024.0,
                                           chunkCount)
+
+                // Auto snapshots get uploaded to PicoClaw
+                if isAutoSnapshot {
+                    autoSnapshotCount += 1
+                    uploadToPicoClaw(imageData: imageBuffer)
+                }
             } else {
-                lastTransferInfo = "JPEG failed! \(imageBuffer.count)/\(totalSize)b, chunks=\(chunkCount)"
+                lastTransferInfo = "\(prefix)JPEG failed! \(imageBuffer.count)/\(totalSize)b, chunks=\(chunkCount)"
             }
             progress = 1.0
             connectionState = .ready
         }
+    }
+
+    // MARK: - PicoClaw Upload
+
+    private func uploadToPicoClaw(imageData: Data) {
+        guard let url = URL(string: kPicoClawURL) else {
+            uploadState = .failed
+            return
+        }
+
+        uploadState = .uploading
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
+        request.setValue("\(imageData.count)", forHTTPHeaderField: "Content-Length")
+
+        URLSession.shared.uploadTask(with: request, from: imageData) { [weak self] _, response, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    self?.uploadState = .failed
+                    self?.lastTransferInfo = "[AUTO] Upload error: \(error.localizedDescription)"
+                    return
+                }
+
+                if let httpResponse = response as? HTTPURLResponse,
+                   (200...299).contains(httpResponse.statusCode) {
+                    self?.uploadState = .success
+                    // Reset upload state after 3 seconds
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                        if self?.uploadState == .success {
+                            self?.uploadState = .idle
+                        }
+                    }
+                } else {
+                    self?.uploadState = .failed
+                }
+            }
+        }.resume()
     }
 }

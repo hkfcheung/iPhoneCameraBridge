@@ -8,7 +8,8 @@
 // ---------------------------------------------------------------------------
 static BleSnapState     state       = BleSnapState::IDLE;
 static uint16_t         frameId     = 0;
-static volatile bool    snapRequest = false;
+static volatile bool    snapRequest     = false;
+static volatile bool    autoSnapRequest = false;
 static unsigned long    errTime     = 0;
 static uint16_t         peerMtu     = 0;
 
@@ -39,7 +40,7 @@ static void startAdvertising() {
 // ---------------------------------------------------------------------------
 // Send JPEG in chunks over IMAGE characteristic
 // ---------------------------------------------------------------------------
-static void sendSnapshot() {
+static void sendSnapshot(bool isAuto = false) {
     camera_fb_t *fb = esp_camera_fb_get();
     if (!fb) {
         Serial.println("[BLE] capture failed");
@@ -73,7 +74,7 @@ static void sendSnapshot() {
         hdr.offset     = offset;
         hdr.length     = len;
         hdr.total_size = total;
-        hdr.flags      = 0;
+        hdr.flags      = isAuto ? FLAG_AUTO : 0;
         if (offset == 0)          hdr.flags |= FLAG_FIRST;
         if (offset + len >= total) hdr.flags |= FLAG_LAST;
 
@@ -94,23 +95,23 @@ static void sendSnapshot() {
 }
 
 // ---------------------------------------------------------------------------
-// NimBLE Callbacks — using ONLY signatures known to work in 1.4.x
+// NimBLE Callbacks — NimBLE-Arduino 2.x API
 // ---------------------------------------------------------------------------
 class ServerCB : public NimBLEServerCallbacks {
-    void onConnect(NimBLEServer *srv) override {
+    void onConnect(NimBLEServer *srv, NimBLEConnInfo &connInfo) override {
         peerMtu = 0;
         Serial.println("[BLE] client connected");
         state = BleSnapState::READY;
     }
 
-    void onDisconnect(NimBLEServer *srv) override {
-        Serial.println("[BLE] client disconnected");
+    void onDisconnect(NimBLEServer *srv, NimBLEConnInfo &connInfo, int reason) override {
+        Serial.printf("[BLE] client disconnected (reason=%d)\n", reason);
         state = BleSnapState::IDLE;
         snapRequest = false;
         startAdvertising();
     }
 
-    void onMTUChange(uint16_t mtu, ble_gap_conn_desc *desc) override {
+    void onMTUChange(uint16_t mtu, NimBLEConnInfo &connInfo) override {
         peerMtu = mtu;
         Serial.printf("[BLE] MTU negotiated: %u\n", mtu);
     }
@@ -118,7 +119,7 @@ class ServerCB : public NimBLEServerCallbacks {
 
 // Use onRead as snap trigger — iOS reads CONTROL to request a snapshot
 class ControlCB : public NimBLECharacteristicCallbacks {
-    void onRead(NimBLECharacteristic *pChr) override {
+    void onRead(NimBLECharacteristic *pChr, NimBLEConnInfo &connInfo) override {
         Serial.println("[BLE] CONTROL read -> SNAP triggered");
         snapRequest = true;
     }
@@ -164,13 +165,29 @@ void bleSnapshotInit() {
 }
 
 void bleSnapshotLoop() {
+    // Manual snapshot has priority
     if (state == BleSnapState::READY && snapRequest) {
         snapRequest = false;
-        Serial.println("[BLE] processing SNAP");
-        sendSnapshot();
+        autoSnapRequest = false;  // discard pending auto if manual requested
+        Serial.println("[BLE] processing manual SNAP");
+        sendSnapshot(false);
+    }
+    // Auto snapshot
+    else if (state == BleSnapState::READY && autoSnapRequest) {
+        autoSnapRequest = false;
+        Serial.println("[BLE] processing auto SNAP");
+        sendSnapshot(true);
     }
 
     if (state == BleSnapState::ERR && millis() - errTime > 1000) {
         setState(BleSnapState::READY);
     }
+}
+
+void bleSnapshotTriggerAuto() {
+    autoSnapRequest = true;
+}
+
+bool bleSnapshotBusy() {
+    return state == BleSnapState::CAPTURING || state == BleSnapState::SENDING;
 }
