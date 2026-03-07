@@ -43,6 +43,8 @@ final class BLEManager: NSObject, ObservableObject {
     @Published var uploadState: UploadState = .idle
     @Published var autoSnapshotCount: Int = 0
 
+    let faceRecognition = FaceRecognitionManager()
+
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
     private var controlChar: CBCharacteristic?
@@ -222,6 +224,7 @@ extension BLEManager: CBPeripheralDelegate {
         if flags & kFlagLast != 0 {
             if let img = UIImage(data: imageBuffer) {
                 snapshotImage = img
+                faceRecognition.processSnapshot(img)
                 lastTransferInfo = String(format: "%@%.1f KB (%d chunks)",
                                           prefix,
                                           Double(imageBuffer.count) / 1024.0,

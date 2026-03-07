@@ -28,8 +28,8 @@ struct ContentView: View {
             .padding(.top)
             .padding(.horizontal)
 
-            // Snapshot image
-            if let image = ble.snapshotImage {
+            // Snapshot image (show annotated version if available)
+            if let image = ble.faceRecognition.processedImage ?? ble.snapshotImage {
                 Image(uiImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
@@ -57,6 +57,21 @@ struct ContentView: View {
                 Text(ble.lastTransferInfo)
                     .font(.caption)
                     .foregroundColor(.secondary)
+            }
+
+            // Recognized faces
+            if !ble.faceRecognition.recognizedNames.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "person.crop.circle.badge.checkmark")
+                        .foregroundColor(.green)
+                    Text(ble.faceRecognition.recognizedNames.joined(separator: ", "))
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color.green.opacity(0.15))
+                .cornerRadius(8)
             }
 
             Spacer()
