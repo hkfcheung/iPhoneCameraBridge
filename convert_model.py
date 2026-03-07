@@ -81,19 +81,30 @@ def convert_to_coreml(onnx_path):
     output_name = output_info.name
     print(f"Output name: {output_name}")
 
-    # Fix dynamic batch dimension (0 -> 1)
+    # Fix dynamic batch dimension (0 -> 1) in the ONNX model itself
     if input_shape[0] == 0:
+        input_info.type.tensor_type.shape.dim[0].dim_value = 1
         input_shape[0] = 1
         print(f"Fixed input shape: {input_shape}")
 
+    # Also fix output dynamic dims if present
+    for out in onnx_model.graph.output:
+        for dim in out.type.tensor_type.shape.dim:
+            if dim.dim_value == 0:
+                dim.dim_value = 1
+
+    # Save fixed model to a temp file for conversion
+    fixed_path = "fixed_" + onnx_path
+    onnx.save(onnx_model, fixed_path)
+    print(f"Saved fixed ONNX model: {fixed_path}")
+
     print("Converting to CoreML...")
     mlmodel = ct.convert(
-        onnx_path,
-        source="pytorch",
+        fixed_path,
         inputs=[
             ct.ImageType(
-                name="image",
-                shape=input_shape,
+                name=input_info.name,
+                shape=tuple(input_shape),
                 scale=1.0 / 127.5,
                 bias=[-1.0, -1.0, -1.0],
                 color_layout=ct.colorlayout.RGB,
@@ -102,6 +113,9 @@ def convert_to_coreml(onnx_path):
         minimum_deployment_target=ct.target.iOS16,
         convert_to="mlprogram",
     )
+
+    # Clean up temp file
+    os.remove(fixed_path)
 
     # Set model metadata
     mlmodel.author = "CameraBridge"
