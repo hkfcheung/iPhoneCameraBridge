@@ -81,13 +81,19 @@ def convert_to_coreml(onnx_path):
     output_name = output_info.name
     print(f"Output name: {output_name}")
 
+    # Fix dynamic batch dimension (0 -> 1)
+    if input_shape[0] == 0:
+        input_shape[0] = 1
+        print(f"Fixed input shape: {input_shape}")
+
     print("Converting to CoreML...")
     mlmodel = ct.convert(
         onnx_path,
+        source="pytorch",
         inputs=[
             ct.ImageType(
                 name="image",
-                shape=(1, 3, img_size, img_size),
+                shape=input_shape,
                 scale=1.0 / 127.5,
                 bias=[-1.0, -1.0, -1.0],
                 color_layout=ct.colorlayout.RGB,
