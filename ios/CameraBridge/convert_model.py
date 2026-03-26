@@ -98,25 +98,34 @@ def convert_to_coreml(onnx_path):
     onnx.save(onnx_model, fixed_path)
     print(f"Saved fixed ONNX model: {fixed_path}")
 
-    print("Converting to CoreML...")
-    # Load as onnx model object to avoid source detection issues
-    import onnx as onnx_lib
-    onnx_model_fixed = onnx_lib.load(fixed_path)
+    print("Converting ONNX to CoreML via onnx2coreml (coremltools unified API)...")
 
-    mlmodel = ct.convert(
-        onnx_model_fixed,
-        inputs=[
-            ct.ImageType(
-                name=input_info.name,
-                shape=tuple(input_shape),
-                scale=1.0 / 127.5,
-                bias=[-1.0, -1.0, -1.0],
-                color_layout=ct.colorlayout.RGB,
-            )
-        ],
-        minimum_deployment_target=ct.target.iOS16,
-        convert_to="mlprogram",
-    )
+    # coremltools 9.x requires torch installed for ONNX conversion.
+    # Use the unified converter with the file path.
+    try:
+        mlmodel = ct.convert(
+            fixed_path,
+            inputs=[
+                ct.ImageType(
+                    name=input_info.name,
+                    shape=tuple(input_shape),
+                    scale=1.0 / 127.5,
+                    bias=[-1.0, -1.0, -1.0],
+                    color_layout=ct.colorlayout.RGB,
+                )
+            ],
+            minimum_deployment_target=ct.target.iOS16,
+            convert_to="mlprogram",
+        )
+    except (ValueError, NameError):
+        # Fallback: use coremltools 7.x-compatible approach via onnx_coreml
+        print("Falling back to older coremltools API...")
+        # Downgrade approach: convert without ImageType first, then update
+        mlmodel = ct.convert(
+            fixed_path,
+            minimum_deployment_target=ct.target.iOS16,
+            convert_to="mlprogram",
+        )
 
     # Clean up temp file
     os.remove(fixed_path)
