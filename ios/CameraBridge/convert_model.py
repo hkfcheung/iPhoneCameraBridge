@@ -101,6 +101,7 @@ def convert_to_coreml(onnx_path):
     print("Converting to CoreML...")
     mlmodel = ct.convert(
         fixed_path,
+        source="pytorch",
         inputs=[
             ct.ImageType(
                 name=input_info.name,
