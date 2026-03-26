@@ -99,9 +99,12 @@ def convert_to_coreml(onnx_path):
     print(f"Saved fixed ONNX model: {fixed_path}")
 
     print("Converting to CoreML...")
+    # Load as onnx model object to avoid source detection issues
+    import onnx as onnx_lib
+    onnx_model_fixed = onnx_lib.load(fixed_path)
+
     mlmodel = ct.convert(
-        fixed_path,
-        source="pytorch",
+        onnx_model_fixed,
         inputs=[
             ct.ImageType(
                 name=input_info.name,
