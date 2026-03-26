@@ -26,16 +26,22 @@ ESP32-S3 camera with BLE snapshot transfer to an iOS app, with optional face rec
 - [PlatformIO](https://platformio.org/) (VSCode extension or CLI)
 
 ### Build & Upload
+
+**Mac/Linux (bash):**
 ```bash
-# Build
 pio run -e xiao_esp32s3
-
-# Upload (close serial monitor first)
 pio run -e xiao_esp32s3 -t upload
-
-# Monitor serial output
 pio device monitor -e xiao_esp32s3 -b 115200
 ```
+
+**Windows (CMD):**
+```cmd
+%USERPROFILE%\.platformio\penv\Scripts\pio run -e xiao_esp32s3
+%USERPROFILE%\.platformio\penv\Scripts\pio run -e xiao_esp32s3 -t upload
+%USERPROFILE%\.platformio\penv\Scripts\pio device monitor -e xiao_esp32s3 -b 115200
+```
+
+> **Note:** Close the serial monitor before uploading — they share the COM port.
 
 ### WiFi Configuration
 Edit `src/main.cpp` and set your 2.4GHz WiFi credentials:
