@@ -44,18 +44,19 @@ final class FaceRecognitionManager: ObservableObject {
     // MARK: - CoreML Model
 
     private func loadModel() {
-        // Expects MobileFaceNet.mlpackage in the Xcode project.
-        // Xcode auto-generates the `MobileFaceNet` class from it.
-        do {
-            let config = MLModelConfiguration()
-            config.computeUnits = .cpuAndNeuralEngine
-            let mlModel = try MobileFaceNet(configuration: config).model
-            model = try VNCoreMLModel(for: mlModel)
-            print("[FaceRec] CoreML model loaded")
-        } catch {
-            print("[FaceRec] ERROR loading CoreML model: \(error.localizedDescription)")
-            print("[FaceRec] Make sure you have added a .mlmodel file to the Xcode project")
-        }
+        // TODO: Uncomment when MobileFaceNet.mlpackage is added to the Xcode project.
+        // Xcode auto-generates the `MobileFaceNet` class from the .mlpackage file.
+        //
+        // do {
+        //     let config = MLModelConfiguration()
+        //     config.computeUnits = .cpuAndNeuralEngine
+        //     let mlModel = try MobileFaceNet(configuration: config).model
+        //     model = try VNCoreMLModel(for: mlModel)
+        //     print("[FaceRec] CoreML model loaded")
+        // } catch {
+        //     print("[FaceRec] ERROR loading CoreML model: \(error.localizedDescription)")
+        // }
+        print("[FaceRec] CoreML model not loaded (MobileFaceNet not yet added)")
     }
 
     // MARK: - Contacts
