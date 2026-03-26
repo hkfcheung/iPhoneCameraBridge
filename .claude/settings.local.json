@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip show:*)",
+      "Bash(~/.platformio/penv/Scripts/pio run:*)",
+      "Bash(~/.platformio/penv/Scripts/pio device:*)",
+      "Bash(gh repo:*)",
+      "Bash(git --version)"
+    ]
+  }
+}

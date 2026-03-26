@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>CameraBridge uses Bluetooth to connect to the ESP32 camera and receive snapshots.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>CameraBridge accesses contacts to identify faces in camera snapshots.</string>
+</dict>
+</plist>
