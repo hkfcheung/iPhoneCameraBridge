@@ -85,19 +85,29 @@ final class FaceRecognitionManager: ObservableObject {
 
             do {
                 try self.contactStore.enumerateContacts(with: request) { contact, _ in
-                    // Prefer full-size photo for better face embeddings
-                    let photoData = contact.imageData ?? contact.thumbnailImageData
-                    guard let photoData = photoData,
-                          let photo = UIImage(data: photoData) else { return }
-
                     let name = [contact.givenName, contact.familyName]
                         .filter { !$0.isEmpty }
                         .joined(separator: " ")
                     guard !name.isEmpty else { return }
 
+                    // Prefer full-size photo for better face embeddings
+                    let photoData = contact.imageData ?? contact.thumbnailImageData
+                    guard let photoData = photoData,
+                          let photo = UIImage(data: photoData) else { return }
+
+                    let faceCount = self.detectFaces(in: photo)
+                    print("[FaceRec] \(name): photo \(Int(photo.size.width))x\(Int(photo.size.height)), faces detected: \(faceCount.count)")
+
+                    if faceCount.isEmpty {
+                        print("[FaceRec] SKIPPING \(name) — no face detected in contact photo")
+                        return
+                    }
+
                     if let embedding = self.generateEmbedding(for: photo) {
                         faces.append(EnrolledFace(name: name, embedding: embedding))
                         print("[FaceRec] Enrolled: \(name)")
+                    } else {
+                        print("[FaceRec] SKIPPING \(name) — embedding generation failed")
                     }
                 }
             } catch {
