@@ -242,6 +242,12 @@ final class FaceRecognitionManager: ObservableObject {
     // MARK: - Process Snapshot (public API)
 
     func processSnapshot(_ image: UIImage) {
+        // Show raw image immediately while processing runs in background
+        DispatchQueue.main.async {
+            self.processedImage = image
+            self.recognizedNames = []
+        }
+
         processingQueue.async { [weak self] in
             guard let self = self else { return }
 
