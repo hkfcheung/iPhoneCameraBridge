@@ -62,7 +62,7 @@ final class FaceRecognitionManager: ObservableObject {
     private func loadModel() {
         do {
             let config = MLModelConfiguration()
-            config.computeUnits = .cpuAndNeuralEngine
+            config.computeUnits = .cpuAndGPU
             let mlModel = try MobileFaceNet(configuration: config).model
             model = try VNCoreMLModel(for: mlModel)
             print("[FaceRec] CoreML model loaded")
@@ -189,29 +189,7 @@ final class FaceRecognitionManager: ObservableObject {
     private func runEmbeddingModel(on cgImage: CGImage) -> [Float]? {
         guard let model = model else { return nil }
 
-        var embedding: [Float]?
-        let semaphore = DispatchSemaphore(value: 0)
-
-        let request = VNCoreMLRequest(model: model) { req, error in
-            defer { semaphore.signal() }
-            if let error = error {
-                print("[FaceRec] CoreML error: \(error.localizedDescription)")
-                return
-            }
-            if let results = req.results as? [VNCoreMLFeatureValueObservation],
-               let multiArray = results.first?.featureValue.multiArrayValue {
-                let count = multiArray.count
-                var vec = [Float](repeating: 0, count: count)
-                for i in 0..<count {
-                    vec[i] = multiArray[i].floatValue
-                }
-                let norm = sqrt(vec.reduce(0) { $0 + $1 * $1 })
-                if norm > 0 {
-                    vec = vec.map { $0 / norm }
-                }
-                embedding = vec
-            }
-        }
+        let request = VNCoreMLRequest(model: model)
         request.imageCropAndScaleOption = .centerCrop
 
         let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
@@ -219,11 +197,24 @@ final class FaceRecognitionManager: ObservableObject {
             try handler.perform([request])
         } catch {
             print("[FaceRec] Embedding request error: \(error.localizedDescription)")
-            semaphore.signal()
+            return nil
         }
-        semaphore.wait()
 
-        return embedding
+        guard let results = request.results as? [VNCoreMLFeatureValueObservation],
+              let multiArray = results.first?.featureValue.multiArrayValue else {
+            return nil
+        }
+
+        let count = multiArray.count
+        var vec = [Float](repeating: 0, count: count)
+        for i in 0..<count {
+            vec[i] = multiArray[i].floatValue
+        }
+        let norm = sqrt(vec.reduce(0) { $0 + $1 * $1 })
+        if norm > 0 {
+            vec = vec.map { $0 / norm }
+        }
+        return vec
     }
 
     // MARK: - Matching
@@ -290,18 +281,34 @@ final class FaceRecognitionManager: ObservableObject {
             let imageWidth = CGFloat(cgImage.width)
             let imageHeight = CGFloat(cgImage.height)
 
-            var names: [String] = []
-            var annotations: [FaceAnnotation] = []
-
-            for (i, face) in faces.enumerated() {
-                let pixelRect = CGRect(
+            // Build face rects
+            var faceRects: [CGRect] = []
+            for face in faces {
+                faceRects.append(CGRect(
                     x: face.boundingBox.origin.x * imageWidth,
                     y: (1 - face.boundingBox.origin.y - face.boundingBox.height) * imageHeight,
                     width: face.boundingBox.width * imageWidth,
                     height: face.boundingBox.height * imageHeight
-                ).integral
-                print("[FaceRec] face \(i): rect=\(pixelRect)")
+                ).integral)
+            }
 
+            // Show bounding boxes immediately (no names yet)
+            let earlyAnnotations = faceRects.map {
+                FaceAnnotation(rect: $0, name: nil, similarity: 0)
+            }
+            let earlyImage = self.drawAnnotations(on: image, annotations: earlyAnnotations)
+            DispatchQueue.main.async {
+                self.processedImage = earlyImage
+            }
+
+            let t2 = CFAbsoluteTimeGetCurrent()
+            print("[FaceRec] bounding boxes shown in \(String(format: "%.0f", (t2-t0)*1000))ms")
+
+            // Now run embedding + matching
+            var names: [String] = []
+            var annotations: [FaceAnnotation] = []
+
+            for (i, pixelRect) in faceRects.enumerated() {
                 var matchName: String?
                 var matchSim: Float = 0
 
@@ -309,30 +316,20 @@ final class FaceRecognitionManager: ObservableObject {
                    self.model != nil {
                     let croppedImage = UIImage(cgImage: croppedCG)
                     if let embedding = self.generateEmbeddingDirect(for: croppedImage) {
-                        print("[FaceRec] face \(i): embedding generated (\(embedding.count) dims)")
-                        // Log top 3 matches
-                        var topMatches: [(String, Float)] = []
-                        for enrolled in self.enrolledFaces {
-                            let sim = self.cosineSimilarity(embedding, enrolled.embedding)
-                            topMatches.append((enrolled.name, sim))
-                        }
-                        topMatches.sort { $0.1 > $1.1 }
-                        for m in topMatches.prefix(3) {
-                            print("[FaceRec]   \(m.0): \(String(format: "%.3f", m.1))")
-                        }
-
                         if let match = self.findMatch(for: embedding) {
                             matchName = match.name
                             matchSim = match.similarity
                             names.append(match.name)
-                        } else {
-                            print("[FaceRec] face \(i): no match above threshold \(self.matchThreshold)")
                         }
-                    } else {
-                        print("[FaceRec] face \(i): embedding generation FAILED")
+                        // Log top match
+                        var bestName = "?"
+                        var bestSim: Float = 0
+                        for enrolled in self.enrolledFaces {
+                            let sim = self.cosineSimilarity(embedding, enrolled.embedding)
+                            if sim > bestSim { bestSim = sim; bestName = enrolled.name }
+                        }
+                        print("[FaceRec] face \(i): best=\(bestName) (\(String(format: "%.3f", bestSim)))")
                     }
-                } else {
-                    print("[FaceRec] face \(i): crop failed or model nil")
                 }
 
                 annotations.append(FaceAnnotation(
