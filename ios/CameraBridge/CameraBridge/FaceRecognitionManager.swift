@@ -232,7 +232,10 @@ final class FaceRecognitionManager: ObservableObject {
         processingQueue.async { [weak self] in
             guard let self = self else { return }
 
+            print("[FaceRec] processSnapshot called, image size: \(image.size)")
+
             let faces = self.detectFaces(in: image)
+            print("[FaceRec] detected \(faces.count) face(s)")
             if faces.isEmpty {
                 DispatchQueue.main.async {
                     self.processedImage = image
@@ -248,13 +251,14 @@ final class FaceRecognitionManager: ObservableObject {
             var names: [String] = []
             var annotations: [FaceAnnotation] = []
 
-            for face in faces {
+            for (i, face) in faces.enumerated() {
                 let pixelRect = CGRect(
                     x: face.boundingBox.origin.x * imageWidth,
                     y: (1 - face.boundingBox.origin.y - face.boundingBox.height) * imageHeight,
                     width: face.boundingBox.width * imageWidth,
                     height: face.boundingBox.height * imageHeight
                 ).integral
+                print("[FaceRec] face \(i): rect=\(pixelRect)")
 
                 var matchName: String?
                 var matchSim: Float = 0
@@ -263,12 +267,30 @@ final class FaceRecognitionManager: ObservableObject {
                    self.model != nil {
                     let croppedImage = UIImage(cgImage: croppedCG)
                     if let embedding = self.generateEmbeddingDirect(for: croppedImage) {
+                        print("[FaceRec] face \(i): embedding generated (\(embedding.count) dims)")
+                        // Log top 3 matches
+                        var topMatches: [(String, Float)] = []
+                        for enrolled in self.enrolledFaces {
+                            let sim = self.cosineSimilarity(embedding, enrolled.embedding)
+                            topMatches.append((enrolled.name, sim))
+                        }
+                        topMatches.sort { $0.1 > $1.1 }
+                        for m in topMatches.prefix(3) {
+                            print("[FaceRec]   \(m.0): \(String(format: "%.3f", m.1))")
+                        }
+
                         if let match = self.findMatch(for: embedding) {
                             matchName = match.name
                             matchSim = match.similarity
                             names.append(match.name)
+                        } else {
+                            print("[FaceRec] face \(i): no match above threshold \(self.matchThreshold)")
                         }
+                    } else {
+                        print("[FaceRec] face \(i): embedding generation FAILED")
                     }
+                } else {
+                    print("[FaceRec] face \(i): crop failed or model nil")
                 }
 
                 annotations.append(FaceAnnotation(
