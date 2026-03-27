@@ -31,7 +31,7 @@ final class FaceRecognitionManager: ObservableObject {
     private let contactStore = CNContactStore()
     private var enrolledFaces: [EnrolledFace] = []
     private var model: VNCoreMLModel?
-    private let matchThreshold: Float = 0.55
+    private let matchThreshold: Float = 0.25
     private let processingQueue = DispatchQueue(label: "face.recognition", qos: .userInitiated)
 
     // MARK: - Init
@@ -77,6 +77,7 @@ final class FaceRecognitionManager: ObservableObject {
             let keys: [CNKeyDescriptor] = [
                 CNContactGivenNameKey as CNKeyDescriptor,
                 CNContactFamilyNameKey as CNKeyDescriptor,
+                CNContactImageDataKey as CNKeyDescriptor,
                 CNContactThumbnailImageDataKey as CNKeyDescriptor
             ]
             let request = CNContactFetchRequest(keysToFetch: keys)
@@ -84,7 +85,9 @@ final class FaceRecognitionManager: ObservableObject {
 
             do {
                 try self.contactStore.enumerateContacts(with: request) { contact, _ in
-                    guard let photoData = contact.thumbnailImageData,
+                    // Prefer full-size photo for better face embeddings
+                    let photoData = contact.imageData ?? contact.thumbnailImageData
+                    guard let photoData = photoData,
                           let photo = UIImage(data: photoData) else { return }
 
                     let name = [contact.givenName, contact.familyName]
