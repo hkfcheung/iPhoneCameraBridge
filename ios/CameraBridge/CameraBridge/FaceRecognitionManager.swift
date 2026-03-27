@@ -41,8 +41,20 @@ final class FaceRecognitionManager: ObservableObject {
     // MARK: - Init
 
     init() {
+        configureAudioSession()
         loadModel()
         requestContactsAccess()
+    }
+
+    private func configureAudioSession() {
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .default, options: [.duckOthers])
+            try session.setActive(true)
+            print("[FaceRec] Audio session configured")
+        } catch {
+            print("[FaceRec] Audio session error: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - CoreML Model
