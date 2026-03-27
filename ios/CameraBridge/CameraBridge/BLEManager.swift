@@ -202,6 +202,10 @@ extension BLEManager: CBPeripheralDelegate {
 
         // First chunk: reset buffer and detect auto flag
         if flags & kFlagFirst != 0 {
+            // Skip auto-snapshots while face recognition is still processing
+            if (flags & kFlagAuto) != 0 && faceRecognition.isProcessing {
+                return
+            }
             imageBuffer = Data()
             chunkCount = 1
             isAutoSnapshot = (flags & kFlagAuto) != 0

@@ -241,24 +241,31 @@ final class FaceRecognitionManager: ObservableObject {
 
     // MARK: - Process Snapshot (public API)
 
+    @Published var isProcessing: Bool = false
+
     func processSnapshot(_ image: UIImage) {
         // Show raw image immediately while processing runs in background
         DispatchQueue.main.async {
             self.processedImage = image
             self.recognizedNames = []
+            self.isProcessing = true
         }
 
         processingQueue.async { [weak self] in
             guard let self = self else { return }
 
+            let startTime = CFAbsoluteTimeGetCurrent()
             print("[FaceRec] processSnapshot called, image size: \(image.size)")
 
+            let t0 = CFAbsoluteTimeGetCurrent()
             let faces = self.detectFaces(in: image)
-            print("[FaceRec] detected \(faces.count) face(s)")
+            let t1 = CFAbsoluteTimeGetCurrent()
+            print("[FaceRec] detected \(faces.count) face(s) in \(String(format: "%.0f", (t1-t0)*1000))ms")
             if faces.isEmpty {
                 DispatchQueue.main.async {
                     self.processedImage = image
                     self.recognizedNames = []
+                    self.isProcessing = false
                 }
                 return
             }
@@ -318,10 +325,13 @@ final class FaceRecognitionManager: ObservableObject {
             }
 
             let annotatedImage = self.drawAnnotations(on: image, annotations: annotations)
+            let totalTime = CFAbsoluteTimeGetCurrent() - startTime
+            print("[FaceRec] total processing: \(String(format: "%.0f", totalTime*1000))ms")
 
             DispatchQueue.main.async {
                 self.processedImage = annotatedImage
                 self.recognizedNames = names
+                self.isProcessing = false
                 if !names.isEmpty {
                     print("[FaceRec] Recognized: \(names.joined(separator: ", "))")
                 }
