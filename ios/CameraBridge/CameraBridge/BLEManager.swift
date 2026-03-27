@@ -230,10 +230,10 @@ extension BLEManager: CBPeripheralDelegate {
                                           Double(imageBuffer.count) / 1024.0,
                                           chunkCount)
 
-                // Auto snapshots get uploaded to PicoClaw
                 if isAutoSnapshot {
                     autoSnapshotCount += 1
-                    uploadToPicoClaw(imageData: imageBuffer)
+                    // TODO: PicoClaw upload disabled for now
+                    // uploadToPicoClaw(imageData: imageBuffer)
                 }
             } else {
                 lastTransferInfo = "\(prefix)JPEG failed! \(imageBuffer.count)/\(totalSize)b, chunks=\(chunkCount)"
