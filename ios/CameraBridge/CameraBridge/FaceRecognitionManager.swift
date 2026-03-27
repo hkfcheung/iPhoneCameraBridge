@@ -3,6 +3,7 @@ import Combine
 import Vision
 import Contacts
 import CoreML
+import AVFoundation
 
 // MARK: - Data types
 
@@ -33,6 +34,9 @@ final class FaceRecognitionManager: ObservableObject {
     private var model: VNCoreMLModel?
     private let matchThreshold: Float = 0.25
     private let processingQueue = DispatchQueue(label: "face.recognition", qos: .userInitiated)
+    private let synthesizer = AVSpeechSynthesizer()
+    private var lastSpokenName: String?
+    private var lastSpokenTime: Date = .distantPast
 
     // MARK: - Init
 
@@ -334,9 +338,34 @@ final class FaceRecognitionManager: ObservableObject {
                 self.isProcessing = false
                 if !names.isEmpty {
                     print("[FaceRec] Recognized: \(names.joined(separator: ", "))")
+                    self.speakNames(names)
                 }
             }
         }
+    }
+
+    // MARK: - Speech
+
+    private func speakNames(_ names: [String]) {
+        let combined = names.joined(separator: ", ")
+
+        // Don't repeat the same name within 5 seconds
+        if combined == lastSpokenName && Date().timeIntervalSince(lastSpokenTime) < 5 {
+            return
+        }
+
+        lastSpokenName = combined
+        lastSpokenTime = Date()
+
+        // Stop any current speech
+        if synthesizer.isSpeaking {
+            synthesizer.stopSpeaking(at: .immediate)
+        }
+
+        let utterance = AVSpeechUtterance(string: combined)
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+        synthesizer.speak(utterance)
     }
 
     // MARK: - Drawing
