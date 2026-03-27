@@ -63,11 +63,15 @@ final class BLEManager: NSObject, ObservableObject {
 
     func startScan() {
         guard central.state == .poweredOn else { return }
+        userDisconnected = false
         connectionState = .scanning
         central.scanForPeripherals(withServices: [kServiceUUID])
     }
 
+    private var userDisconnected = false
+
     func disconnect() {
+        userDisconnected = true
         if let p = peripheral {
             central.cancelPeripheralConnection(p)
         }
@@ -120,9 +124,11 @@ extension BLEManager: CBCentralManagerDelegate {
         self.peripheral = nil
         controlChar = nil
         connectionState = .disconnected
-        // Auto-reconnect after 1 second
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-            self?.startScan()
+        // Auto-reconnect only if user didn't manually disconnect
+        if !userDisconnected {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                self?.startScan()
+            }
         }
     }
 }
