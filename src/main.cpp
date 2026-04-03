@@ -239,6 +239,7 @@ void setup() {
     Serial.println();
     Serial.print("Connected! Open browser to: http://");
     Serial.println(WiFi.localIP());
+    Serial.printf("WiFi RSSI: %d dBm\n", WiFi.RSSI());
   }
 
   // Start web server
@@ -256,9 +257,22 @@ void setup() {
   faceDetectInit();
 }
 
+static unsigned long lastRssiLog = 0;
+
 void loop() {
   checkButton();
   server.handleClient();
   bleSnapshotLoop();
   faceDetectLoop();
+
+  // Log WiFi signal strength every 30 seconds
+  if (WiFi.status() == WL_CONNECTED && millis() - lastRssiLog > 30000) {
+    lastRssiLog = millis();
+    int rssi = WiFi.RSSI();
+    const char *quality = rssi > -50 ? "Excellent" :
+                          rssi > -60 ? "Good" :
+                          rssi > -70 ? "Fair" :
+                          rssi > -80 ? "Weak" : "Very Weak";
+    Serial.printf("[WiFi] RSSI: %d dBm (%s)\n", rssi, quality);
+  }
 }

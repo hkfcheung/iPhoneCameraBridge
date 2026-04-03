@@ -54,8 +54,9 @@ static void sendSnapshot(bool isAuto = false) {
     setState(BleSnapState::SENDING);
     frameId++;
 
-    // Use conservative 180-byte payload (fits in any MTU)
+    // Conservative 180-byte payload — reliable across all MTU sizes
     const uint16_t chunkPayload = 180;
+    Serial.printf("[BLE] chunk payload=%u (MTU=%u)\n", chunkPayload, peerMtu);
 
     uint32_t offset = 0;
     uint32_t total  = fb->len;
@@ -84,10 +85,18 @@ static void sendSnapshot(bool isAuto = false) {
         memcpy(buf + sizeof(ChunkHeader), fb->buf + offset, len);
 
         pImage->setValue(buf, sizeof(ChunkHeader) + len);
-        pImage->notify();
+        bool sent = pImage->notify();
+        if (!sent) {
+            Serial.printf("[BLE] notify FAILED at offset %u, retrying...\n", offset);
+            delay(100);
+            sent = pImage->notify();
+            if (!sent) {
+                Serial.printf("[BLE] notify FAILED again at offset %u\n", offset);
+            }
+        }
 
         offset += len;
-        delay(80);  // 80ms between chunks — reliable with NimBLE 2.x
+        delay(80);  // 80ms between chunks for reliability
     }
 
     esp_camera_fb_return(fb);
@@ -103,6 +112,8 @@ class ServerCB : public NimBLEServerCallbacks {
     void onConnect(NimBLEServer *srv, NimBLEConnInfo &connInfo) override {
         peerMtu = 0;
         Serial.println("[BLE] client connected");
+        // Request longer supervision timeout (400 = 4 seconds) to prevent premature disconnects
+        srv->updateConnParams(connInfo.getConnHandle(), 12, 24, 0, 400);
         state = BleSnapState::READY;
     }
 
