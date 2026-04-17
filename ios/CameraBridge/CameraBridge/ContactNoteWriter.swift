@@ -1,15 +1,20 @@
 import Foundation
 import Contacts
 
-/// Appends a dated context line to a contact's `note` field.
+/// Persists per-contact context captured from ESP32 audio.
 ///
-/// NOTE: Reading/writing CNContact.note requires the entitlement
-/// `com.apple.developer.contacts.notes`. Apple grants this only on request
-/// for App Store builds; for personal/development builds signed with a
-/// developer certificate, add the entitlement to the target and it just works.
-/// Without the entitlement, CNContactNoteKey reads as an empty string and
-/// save requests silently ignore the note change.
+/// We'd prefer `CNContact.note`, but that requires the
+/// `com.apple.developer.contacts.notes` entitlement which Apple does not
+/// grant to personal teams. Instead we stash the context in a labeled
+/// `urlAddresses` entry — any plain string is accepted, it shows up on
+/// the contact card, and no special entitlement is needed.
+///
+/// The entry is keyed by the label `"Context"`. On each capture we rewrite
+/// that single entry, prepending the newest line so the latest context is
+/// at the top.
 final class ContactNoteWriter {
+
+    private static let contextLabel = "Context"
 
     private let store = CNContactStore()
 
@@ -28,7 +33,7 @@ final class ContactNoteWriter {
         let keys: [CNKeyDescriptor] = [
             CNContactGivenNameKey as CNKeyDescriptor,
             CNContactFamilyNameKey as CNKeyDescriptor,
-            CNContactNoteKey as CNKeyDescriptor,
+            CNContactUrlAddressesKey as CNKeyDescriptor,
         ]
 
         let predicate = CNContact.predicateForContacts(matchingName: fullName)
@@ -55,14 +60,24 @@ final class ContactNoteWriter {
 
         let mutable = contact.mutableCopy() as! CNMutableContact
         let stamp = Self.dateFormatter.string(from: Date())
-        let line  = "[\(stamp)] \(text)"
-        mutable.note = mutable.note.isEmpty ? line : mutable.note + "\n" + line
+        let newLine = "[\(stamp)] \(text)"
+
+        // Look for an existing "Context" entry; prepend new line if found.
+        var updated = mutable.urlAddresses
+        if let idx = updated.firstIndex(where: { $0.label == Self.contextLabel }) {
+            let existing = updated[idx].value as String
+            let merged   = newLine + "\n" + existing
+            updated[idx] = CNLabeledValue(label: Self.contextLabel, value: merged as NSString)
+        } else {
+            updated.append(CNLabeledValue(label: Self.contextLabel, value: newLine as NSString))
+        }
+        mutable.urlAddresses = updated
 
         let req = CNSaveRequest()
         req.update(mutable)
         do {
             try store.execute(req)
-            print("[ContactWriter] appended to \(fullName): \(line)")
+            print("[ContactWriter] appended to \(fullName): \(newLine)")
             return true
         } catch {
             print("[ContactWriter] save failed for \(fullName): \(error.localizedDescription)")
