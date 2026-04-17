@@ -1,5 +1,7 @@
 #include "ble_snapshot.h"
+#include "audio_capture.h"
 #include <Arduino.h>
+#include <esp_heap_caps.h>
 #include "esp_camera.h"
 #include <NimBLEDevice.h>
 
@@ -8,8 +10,10 @@
 // ---------------------------------------------------------------------------
 static BleSnapState     state       = BleSnapState::IDLE;
 static uint16_t         frameId     = 0;
+static uint16_t         audioFrameId    = 0;
 static volatile bool    snapRequest     = false;
 static volatile bool    autoSnapRequest = false;
+static volatile bool    recordRequest   = false;
 static unsigned long    errTime     = 0;
 static uint16_t         peerMtu     = 0;
 
@@ -17,6 +21,7 @@ static NimBLEServer         *pServer  = nullptr;
 static NimBLECharacteristic *pControl = nullptr;
 static NimBLECharacteristic *pStatus  = nullptr;
 static NimBLECharacteristic *pImage   = nullptr;
+static NimBLECharacteristic *pAudio   = nullptr;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -106,6 +111,83 @@ static void sendSnapshot(bool isAuto = false) {
 }
 
 // ---------------------------------------------------------------------------
+// Record audio then send in chunks over AUDIO characteristic
+// ---------------------------------------------------------------------------
+static void sendAudio() {
+    setState(BleSnapState::CAPTURING);
+
+    if (!audioCaptureInit()) {
+        Serial.println("[BLE] audio init failed");
+        setState(BleSnapState::ERR);
+        errTime = millis();
+        return;
+    }
+
+    uint8_t *pcm = (uint8_t *)heap_caps_malloc(AUDIO_BYTES, MALLOC_CAP_SPIRAM);
+    if (!pcm) {
+        Serial.println("[BLE] audio PSRAM alloc failed");
+        setState(BleSnapState::ERR);
+        errTime = millis();
+        return;
+    }
+
+    size_t captured = audioCaptureRecord(pcm, AUDIO_BYTES);
+    if (captured == 0) {
+        Serial.println("[BLE] audio capture returned 0");
+        free(pcm);
+        setState(BleSnapState::ERR);
+        errTime = millis();
+        return;
+    }
+
+    setState(BleSnapState::SENDING);
+    audioFrameId++;
+
+    const uint16_t chunkPayload = 180;
+    uint32_t offset = 0;
+    uint32_t total  = captured;
+    uint8_t buf[200];
+
+    while (offset < total) {
+        if (pServer->getConnectedCount() == 0) {
+            Serial.println("[BLE] client gone, aborting audio");
+            break;
+        }
+
+        uint16_t len = (total - offset > chunkPayload)
+                       ? chunkPayload
+                       : (uint16_t)(total - offset);
+
+        ChunkHeader hdr = {};
+        hdr.frame_id   = audioFrameId;
+        hdr.offset     = offset;
+        hdr.length     = len;
+        hdr.total_size = total;
+        hdr.flags      = 0;
+        if (offset == 0)          hdr.flags |= FLAG_FIRST;
+        if (offset + len >= total) hdr.flags |= FLAG_LAST;
+
+        memcpy(buf, &hdr, sizeof(ChunkHeader));
+        memcpy(buf + sizeof(ChunkHeader), pcm + offset, len);
+
+        pAudio->setValue(buf, sizeof(ChunkHeader) + len);
+        bool sent = pAudio->notify();
+        if (!sent) {
+            delay(100);
+            sent = pAudio->notify();
+            if (!sent) Serial.printf("[BLE] audio notify FAILED at %u\n", offset);
+        }
+
+        offset += len;
+        delay(40);   // audio payload is ~5x JPEG size, use shorter gap
+    }
+
+    free(pcm);
+    Serial.printf("[BLE] sent audio frame %u  (%u bytes)\n", audioFrameId, total);
+    setState(BleSnapState::READY);
+}
+
+// ---------------------------------------------------------------------------
 // NimBLE Callbacks — NimBLE-Arduino 2.x API
 // ---------------------------------------------------------------------------
 class ServerCB : public NimBLEServerCallbacks {
@@ -121,6 +203,7 @@ class ServerCB : public NimBLEServerCallbacks {
         Serial.printf("[BLE] client disconnected (reason=%d)\n", reason);
         state = BleSnapState::IDLE;
         snapRequest = false;
+        recordRequest = false;
         startAdvertising();
     }
 
@@ -130,11 +213,22 @@ class ServerCB : public NimBLEServerCallbacks {
     }
 };
 
-// Use onRead as snap trigger — iOS reads CONTROL to request a snapshot
+// iOS can either READ CONTROL (legacy path = SNAP) or WRITE a command byte.
 class ControlCB : public NimBLECharacteristicCallbacks {
     void onRead(NimBLECharacteristic *pChr, NimBLEConnInfo &connInfo) override {
         Serial.println("[BLE] CONTROL read -> SNAP triggered");
         snapRequest = true;
+    }
+    void onWrite(NimBLECharacteristic *pChr, NimBLEConnInfo &connInfo) override {
+        auto val = pChr->getValue();
+        if (val.size() == 0) return;
+        uint8_t cmd = val.data()[0];
+        Serial.printf("[BLE] CONTROL write cmd=0x%02X\n", cmd);
+        switch (cmd) {
+            case CMD_SNAP:   snapRequest   = true; break;
+            case CMD_RECORD: recordRequest = true; break;
+            default: Serial.printf("[BLE] unknown cmd 0x%02X\n", cmd); break;
+        }
     }
 };
 
@@ -155,7 +249,7 @@ void bleSnapshotInit() {
 
     pControl = pSvc->createCharacteristic(
         CONTROL_UUID,
-        NIMBLE_PROPERTY::READ
+        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE
     );
     pControl->setCallbacks(new ControlCB());
 
@@ -168,6 +262,10 @@ void bleSnapshotInit() {
 
     pImage = pSvc->createCharacteristic(
         IMAGE_UUID,
+        NIMBLE_PROPERTY::NOTIFY
+    );
+    pAudio = pSvc->createCharacteristic(
+        AUDIO_UUID,
         NIMBLE_PROPERTY::NOTIFY
     );
     Serial.println("[BLE] characteristics created");
@@ -190,6 +288,12 @@ void bleSnapshotLoop() {
         autoSnapRequest = false;  // discard pending auto if manual requested
         Serial.println("[BLE] processing manual SNAP");
         sendSnapshot(false);
+    }
+    // Audio record
+    else if (state == BleSnapState::READY && recordRequest) {
+        recordRequest = false;
+        Serial.println("[BLE] processing audio RECORD");
+        sendAudio();
     }
     // Auto snapshot
     else if (state == BleSnapState::READY && autoSnapRequest) {

@@ -9,11 +9,16 @@ private let kServiceUUID  = CBUUID(string: "19B10000-E8F2-537E-4F6C-D104768A1214
 private let kControlUUID  = CBUUID(string: "19B10001-E8F2-537E-4F6C-D104768A1214")
 private let kStatusUUID   = CBUUID(string: "19B10002-E8F2-537E-4F6C-D104768A1214")
 private let kImageUUID    = CBUUID(string: "19B10003-E8F2-537E-4F6C-D104768A1214")
+private let kAudioUUID    = CBUUID(string: "19B10004-E8F2-537E-4F6C-D104768A1214")
 
 private let kCmdSnap: UInt8 = 0x01
+private let kCmdRecord: UInt8 = 0x02
 private let kFlagFirst: UInt8 = 0x01
 private let kFlagLast:  UInt8 = 0x02
 private let kFlagAuto:  UInt8 = 0x04
+
+// PCM format sent by ESP32: 16-bit mono, 16 kHz, little-endian
+let kAudioSampleRate: Double = 16000
 
 // PicoClaw gateway URL — update to your actual endpoint
 private let kPicoClawURL = "https://your-picoclaw-gateway.example.com/upload"
@@ -43,22 +48,43 @@ final class BLEManager: NSObject, ObservableObject {
     @Published var uploadState: UploadState = .idle
     @Published var autoSnapshotCount: Int = 0
 
+    // Latest text produced from ESP32 audio. Shown under the chunk status.
+    @Published var lastTranscript: String = ""
+    @Published var lastSummary: String = ""
+    @Published var lastContextName: String = ""
+
     let faceRecognition = FaceRecognitionManager()
 
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
     private var controlChar: CBCharacteristic?
 
-    // Reassembly buffer
+    // Reassembly buffer — image
     private var imageBuffer = Data()
     private var expectedSize: UInt32 = 0
     private var currentFrameId: UInt16 = 0
     private var chunkCount = 0
     private var isAutoSnapshot = false
 
+    // Reassembly buffer — audio
+    private var audioBuffer = Data()
+    private var audioChunkCount = 0
+
+    // Name of the person whose face was matched on the preceding snapshot.
+    // Set externally (FaceRecognitionManager calls captureContext(for:)),
+    // read when an audio buffer finishes so we can write to the right contact.
+    private var pendingContextName: String?
+
+    private let transcriber = AudioTranscriber()
+    private let summarizer  = ContextSummarizer()
+    private let contactWriter = ContactNoteWriter()
+
     override init() {
         super.init()
         central = CBCentralManager(delegate: self, queue: .main)
+        faceRecognition.onMatchedName = { [weak self] name in
+            self?.captureContext(for: name)
+        }
     }
 
     func startScan() {
@@ -91,6 +117,18 @@ final class BLEManager: NSObject, ObservableObject {
         progress = 0
         lastTransferInfo = "Reading CONTROL to trigger snap..."
         p.readValue(for: ctrl)
+    }
+
+    /// Called by FaceRecognitionManager after a contact is matched.
+    /// Tells the ESP32 to record audio and, on arrival, attribute it to `name`.
+    func captureContext(for name: String) {
+        guard let p = peripheral, let ctrl = controlChar else {
+            lastTransferInfo = "captureContext: no peripheral/control"
+            return
+        }
+        pendingContextName = name
+        lastTransferInfo = "Recording audio for \(name)…"
+        p.writeValue(Data([kCmdRecord]), for: ctrl, type: .withResponse)
     }
 }
 
@@ -139,7 +177,7 @@ extension BLEManager: CBPeripheralDelegate {
                     didDiscoverServices error: Error?) {
         guard let svc = peripheral.services?.first(where: { $0.uuid == kServiceUUID }) else { return }
         peripheral.discoverCharacteristics(
-            [kControlUUID, kStatusUUID, kImageUUID], for: svc)
+            [kControlUUID, kStatusUUID, kImageUUID, kAudioUUID], for: svc)
     }
 
     func peripheral(_ peripheral: CBPeripheral,
@@ -161,6 +199,9 @@ extension BLEManager: CBPeripheralDelegate {
             case kImageUUID:
                 peripheral.setNotifyValue(true, for: c)
                 found.append("IMAGE")
+            case kAudioUUID:
+                peripheral.setNotifyValue(true, for: c)
+                found.append("AUDIO")
             default:
                 found.append("unknown:\(c.uuid)")
             }
@@ -178,6 +219,8 @@ extension BLEManager: CBPeripheralDelegate {
             handleStatusUpdate(data)
         } else if characteristic.uuid == kImageUUID {
             handleImageChunk(data)
+        } else if characteristic.uuid == kAudioUUID {
+            handleAudioChunk(data)
         }
     }
 
@@ -250,6 +293,63 @@ extension BLEManager: CBPeripheralDelegate {
             }
             progress = 1.0
             connectionState = .ready
+        }
+    }
+
+    // MARK: - Audio chunk reassembly
+
+    private func handleAudioChunk(_ data: Data) {
+        guard data.count > 16 else { return }
+        let flags: UInt8 = data[12]
+
+        if flags & kFlagFirst != 0 {
+            audioBuffer = Data()
+            audioChunkCount = 0
+        }
+        audioChunkCount += 1
+
+        let payload = data.subdata(in: 16 ..< data.count)
+        audioBuffer.append(payload)
+
+        let totalSize = UInt32(data[8]) | (UInt32(data[9]) << 8)
+                      | (UInt32(data[10]) << 16) | (UInt32(data[11]) << 24)
+        lastTransferInfo = "Audio chunk #\(audioChunkCount): \(audioBuffer.count)/\(totalSize)b"
+
+        if flags & kFlagLast != 0 {
+            let pcm = audioBuffer
+            let name = pendingContextName ?? "Unknown"
+            pendingContextName = nil
+            lastTransferInfo = "Audio done: \(pcm.count) bytes, transcribing…"
+            lastContextName = name
+            lastTranscript = ""
+            lastSummary = ""
+            Task { await self.processContextAudio(pcm: pcm, name: name) }
+        }
+    }
+
+    private func processContextAudio(pcm: Data, name: String) async {
+        guard let transcript = await transcriber.transcribe(pcm: pcm,
+                                                            sampleRate: kAudioSampleRate) else {
+            await MainActor.run { self.lastTransferInfo = "Transcribe failed" }
+            return
+        }
+        await MainActor.run {
+            self.lastTransferInfo = "Transcribed \(transcript.split(whereSeparator: { $0.isWhitespace }).count) words, summarizing…"
+            self.lastTranscript = transcript
+        }
+        print("[BLE] transcript(\(name)): \(transcript)")
+
+        let summary = await summarizer.summarize(transcript: transcript, subject: name)
+        print("[BLE] summary(\(name)): \(summary)")
+        await MainActor.run {
+            self.lastSummary = summary
+        }
+
+        let ok = contactWriter.appendNote(forFullName: name, text: summary)
+        await MainActor.run {
+            self.lastTransferInfo = ok
+                ? "Saved context to \(name)"
+                : "Could not save to \(name)"
         }
     }
 

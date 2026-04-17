@@ -29,6 +29,11 @@ final class FaceRecognitionManager: ObservableObject {
     @Published var recognizedNames: [String] = []
     @Published var contactsAuthorized: Bool = false
 
+    /// Called on the main thread with a matched contact's full name,
+    /// at most once per `contextCooldown` per name. BLEManager sets this
+    /// to trigger audio recording + summarization.
+    var onMatchedName: ((String) -> Void)?
+
     private let contactStore = CNContactStore()
     private var enrolledFaces: [EnrolledFace] = []
     private var model: VNCoreMLModel?
@@ -37,6 +42,10 @@ final class FaceRecognitionManager: ObservableObject {
     private let synthesizer = AVSpeechSynthesizer()
     private var lastSpokenName: String?
     private var lastSpokenTime: Date = .distantPast
+
+    // Context-capture cooldown: don't re-record the same person too often.
+    private let contextCooldown: TimeInterval = 60
+    private var lastContextTime: [String: Date] = [:]
 
     // MARK: - Init
 
@@ -348,9 +357,23 @@ final class FaceRecognitionManager: ObservableObject {
                 if !names.isEmpty {
                     print("[FaceRec] Recognized: \(names.joined(separator: ", "))")
                     self.speakNames(names)
+                    self.triggerContextCapture(names: names)
                 }
             }
         }
+    }
+
+    // MARK: - Context capture trigger
+
+    private func triggerContextCapture(names: [String]) {
+        // Only trigger for the first recognized name (one recording at a time).
+        guard let name = names.first, let hook = onMatchedName else { return }
+        let now = Date()
+        if let last = lastContextTime[name], now.timeIntervalSince(last) < contextCooldown {
+            return
+        }
+        lastContextTime[name] = now
+        hook(name)
     }
 
     // MARK: - Speech

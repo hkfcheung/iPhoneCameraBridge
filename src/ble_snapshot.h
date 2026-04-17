@@ -6,9 +6,11 @@
 #define CONTROL_UUID    "19B10001-E8F2-537E-4F6C-D104768A1214"
 #define STATUS_UUID     "19B10002-E8F2-537E-4F6C-D104768A1214"
 #define IMAGE_UUID      "19B10003-E8F2-537E-4F6C-D104768A1214"
+#define AUDIO_UUID      "19B10004-E8F2-537E-4F6C-D104768A1214"
 
 // Control commands (written to CONTROL characteristic)
-#define CMD_SNAP  0x01
+#define CMD_SNAP    0x01
+#define CMD_RECORD  0x02
 
 // Chunk header flags
 #define FLAG_FIRST  0x01

@@ -59,6 +59,42 @@ struct ContentView: View {
                     .foregroundColor(.secondary)
             }
 
+            // Transcript / summary of the latest audio context
+            if !ble.lastTranscript.isEmpty || !ble.lastSummary.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    if !ble.lastContextName.isEmpty {
+                        Text(ble.lastContextName)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .textCase(.uppercase)
+                    }
+                    if !ble.lastTranscript.isEmpty {
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: "waveform")
+                                .foregroundColor(.blue)
+                            Text(ble.lastTranscript)
+                                .font(.caption)
+                                .foregroundColor(.primary)
+                        }
+                    }
+                    if !ble.lastSummary.isEmpty {
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: "text.bubble")
+                                .foregroundColor(.green)
+                            Text(ble.lastSummary)
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundColor(.primary)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(Color(.systemGray6))
+                .cornerRadius(8)
+                .padding(.horizontal)
+            }
+
             // Recognized faces
             if !ble.faceRecognition.recognizedNames.isEmpty {
                 HStack(spacing: 8) {
