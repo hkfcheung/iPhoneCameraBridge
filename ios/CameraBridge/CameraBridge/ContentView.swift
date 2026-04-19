@@ -59,6 +59,24 @@ struct ContentView: View {
                     .foregroundColor(.secondary)
             }
 
+            // Listening indicator — shown while ESP32 mic is hot / audio is transferring
+            if ble.isRecordingContext {
+                HStack(spacing: 8) {
+                    Image(systemName: "mic.fill")
+                        .foregroundColor(.white)
+                    Text("Listening… say something about the person")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.white)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity)
+                .background(Color.red)
+                .cornerRadius(8)
+                .padding(.horizontal)
+            }
+
             // Transcript / summary of the latest audio context
             if !ble.lastTranscript.isEmpty || !ble.lastSummary.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {

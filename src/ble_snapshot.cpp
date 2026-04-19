@@ -143,11 +143,17 @@ static void sendAudio() {
     setState(BleSnapState::SENDING);
     audioFrameId++;
 
-    const uint16_t chunkPayload = 180;
+    // At MTU 517 (what iOS negotiates), ATT can carry 517-3 = 514 bytes
+    // per notification. Subtract our 16-byte header → 498 payload. Cap at
+    // 490 for safety. Falls back to 180 if MTU negotiation hasn't landed.
+    uint16_t chunkPayload = 180;
+    if (peerMtu >= 247)  chunkPayload = (peerMtu - 3 - 16 > 490) ? 490
+                                                                 : peerMtu - 3 - 16;
     uint32_t offset = 0;
     uint32_t total  = captured;
-    uint8_t buf[200];
+    uint8_t buf[520];
 
+    unsigned long t0 = millis();
     while (offset < total) {
         if (pServer->getConnectedCount() == 0) {
             Serial.println("[BLE] client gone, aborting audio");
@@ -173,14 +179,16 @@ static void sendAudio() {
         pAudio->setValue(buf, sizeof(ChunkHeader) + len);
         bool sent = pAudio->notify();
         if (!sent) {
-            delay(100);
+            delay(50);
             sent = pAudio->notify();
             if (!sent) Serial.printf("[BLE] audio notify FAILED at %u\n", offset);
         }
 
         offset += len;
-        delay(40);   // audio payload is ~5x JPEG size, use shorter gap
+        delay(10);
     }
+    Serial.printf("[BLE] audio TX %u bytes in %lu ms (chunk=%u)\n",
+                  total, millis() - t0, chunkPayload);
 
     free(pcm);
     Serial.printf("[BLE] sent audio frame %u  (%u bytes)\n", audioFrameId, total);

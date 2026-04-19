@@ -53,6 +53,10 @@ final class BLEManager: NSObject, ObservableObject {
     @Published var lastSummary: String = ""
     @Published var lastContextName: String = ""
 
+    // True while the ESP32 mic is hot OR audio is still transferring over BLE.
+    // Drives the "🎤 Listening…" indicator in ContentView.
+    @Published var isRecordingContext: Bool = false
+
     let faceRecognition = FaceRecognitionManager()
 
     private var central: CBCentralManager!
@@ -128,6 +132,7 @@ final class BLEManager: NSObject, ObservableObject {
         }
         pendingContextName = name
         lastTransferInfo = "Recording audio for \(name)…"
+        isRecordingContext = true
         p.writeValue(Data([kCmdRecord]), for: ctrl, type: .withResponse)
     }
 }
@@ -259,6 +264,10 @@ extension BLEManager: CBPeripheralDelegate {
             chunkCount = 1
             isAutoSnapshot = (flags & kFlagAuto) != 0
             connectionState = .receiving
+            // Clear prior person's transcript/summary card as a new snapshot begins
+            lastTranscript = ""
+            lastSummary = ""
+            lastContextName = ""
         }
 
         // Always append everything after the 16-byte header
@@ -330,7 +339,10 @@ extension BLEManager: CBPeripheralDelegate {
     private func processContextAudio(pcm: Data, name: String) async {
         guard let transcript = await transcriber.transcribe(pcm: pcm,
                                                             sampleRate: kAudioSampleRate) else {
-            await MainActor.run { self.lastTransferInfo = "Transcribe failed" }
+            await MainActor.run {
+                self.lastTransferInfo = "Transcribe failed"
+                self.isRecordingContext = false
+            }
             return
         }
         await MainActor.run {
@@ -350,6 +362,7 @@ extension BLEManager: CBPeripheralDelegate {
             self.lastTransferInfo = ok
                 ? "Saved context to \(name)"
                 : "Could not save to \(name)"
+            self.isRecordingContext = false
         }
     }
 
