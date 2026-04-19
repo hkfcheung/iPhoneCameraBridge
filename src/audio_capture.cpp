@@ -49,8 +49,16 @@ bool audioCaptureInit() {
     i2s_set_clk(I2S_PORT, AUDIO_SAMPLE_RATE,
                 I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_MONO);
 
+    // Explicitly set PDM decimation. Without this, the legacy driver on
+    // ESP32-S3 leaves the PDM RX decimator at a default that produces
+    // a sample rate 2-3x lower than AUDIO_SAMPLE_RATE → playback sounds
+    // sped up when interpreted at 16 kHz. I2S_PDM_DSR_16S = 64× oversample,
+    // standard for 1 MHz-class PDM MEMS mics (MSM261D3526H1CPM).
+    i2s_set_pdm_rx_down_sample(I2S_PORT, I2S_PDM_DSR_16S);
+
     initialized = true;
-    Serial.printf("[AUDIO] PDM mic init OK  (%d Hz, mono, 16-bit)\n", AUDIO_SAMPLE_RATE);
+    Serial.printf("[AUDIO] PDM mic init OK  (%d Hz, mono, 16-bit, dsr=16s)\n",
+                  AUDIO_SAMPLE_RATE);
     return true;
 }
 

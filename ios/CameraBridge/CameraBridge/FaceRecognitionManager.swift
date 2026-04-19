@@ -23,7 +23,7 @@ private struct FaceAnnotation {
 /// **Setup required:** Add a CoreML face-embedding model (e.g. MobileFaceNet.mlmodel)
 /// to the Xcode project. The model must accept a 112x112 (or 160x160) RGB image and
 /// output a 1-D float array (embedding). Update `loadModel()` with the generated class name.
-final class FaceRecognitionManager: ObservableObject {
+final class FaceRecognitionManager: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
 
     @Published var processedImage: UIImage?
     @Published var recognizedNames: [String] = []
@@ -47,12 +47,18 @@ final class FaceRecognitionManager: ObservableObject {
     private let contextCooldown: TimeInterval = 60
     private var lastContextTime: [String: Date] = [:]
 
+    // Pending context capture — deferred until TTS finishes so the ESP32 mic
+    // doesn't record the iPhone's own "Matthew" announcement.
+    private var pendingContextName: String?
+
     // MARK: - Init
 
-    init() {
+    override init() {
+        super.init()
         configureAudioSession()
         loadModel()
         requestContactsAccess()
+        synthesizer.delegate = self
     }
 
     private func configureAudioSession() {
@@ -367,13 +373,47 @@ final class FaceRecognitionManager: ObservableObject {
 
     private func triggerContextCapture(names: [String]) {
         // Only trigger for the first recognized name (one recording at a time).
-        guard let name = names.first, let hook = onMatchedName else { return }
+        guard let name = names.first, onMatchedName != nil else { return }
         let now = Date()
         if let last = lastContextTime[name], now.timeIntervalSince(last) < contextCooldown {
             return
         }
         lastContextTime[name] = now
-        hook(name)
+
+        // Defer the actual CMD_RECORD until TTS has finished speaking the name,
+        // otherwise the ESP32 mic captures the iPhone's own announcement instead
+        // of the user's voice.
+        if synthesizer.isSpeaking {
+            pendingContextName = name
+        } else {
+            fireContextCapture(name: name)
+        }
+    }
+
+    private func fireContextCapture(name: String) {
+        pendingContextName = nil
+        onMatchedName?(name)
+    }
+
+    // MARK: - AVSpeechSynthesizerDelegate
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,
+                           didFinish utterance: AVSpeechUtterance) {
+        if let name = pendingContextName {
+            DispatchQueue.main.async { [weak self] in
+                self?.fireContextCapture(name: name)
+            }
+        }
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,
+                           didCancel utterance: AVSpeechUtterance) {
+        // Treat cancel the same as finish: if we had something pending, fire it.
+        if let name = pendingContextName {
+            DispatchQueue.main.async { [weak self] in
+                self?.fireContextCapture(name: name)
+            }
+        }
     }
 
     // MARK: - Speech
