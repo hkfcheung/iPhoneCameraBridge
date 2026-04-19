@@ -8,5 +8,9 @@
 	<string>CameraBridge accesses contacts to identify faces in camera snapshots and save short context notes about the people it recognizes.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>CameraBridge transcribes audio captured by the ESP32 on-device so it can summarize context about recognized contacts.</string>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 </dict>
 </plist>

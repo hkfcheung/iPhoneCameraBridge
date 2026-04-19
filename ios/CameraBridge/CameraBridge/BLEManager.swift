@@ -245,36 +245,46 @@ extension BLEManager: CBPeripheralDelegate {
     }
 
     private func handleImageChunk(_ data: Data) {
-        chunkCount += 1
-
         guard data.count > 16 else {
+            chunkCount += 1
             lastTransferInfo = "Chunk #\(chunkCount) too small: \(data.count)b"
             return
         }
 
         let flags: UInt8 = data[12]
+        let offset = UInt32(data[2]) | (UInt32(data[3]) << 8)
+                   | (UInt32(data[4]) << 16) | (UInt32(data[5]) << 24)
+        let totalSize = UInt32(data[8]) | (UInt32(data[9]) << 8)
+                      | (UInt32(data[10]) << 16) | (UInt32(data[11]) << 24)
 
-        // First chunk: reset buffer and detect auto flag
-        if flags & kFlagFirst != 0 {
-            // Skip auto-snapshots while face recognition is still processing
+        // offset == 0 is authoritative: reset regardless of FLAG_FIRST so that
+        // a dropped first-chunk-with-flag doesn't leave stale bytes behind.
+        if offset == 0 {
             if (flags & kFlagAuto) != 0 && faceRecognition.isProcessing {
-                return
+                return  // skip auto-snapshot while still processing the last one
             }
             imageBuffer = Data()
-            chunkCount = 1
+            chunkCount = 0
             isAutoSnapshot = (flags & kFlagAuto) != 0
             connectionState = .receiving
-            // Clear prior person's transcript/summary card as a new snapshot begins
-            lastTranscript = ""
-            lastSummary = ""
-            lastContextName = ""
+        }
+        chunkCount += 1
+
+        let payload = data.subdata(in: 16 ..< data.count)
+
+        // Place chunk by offset to stay aligned even if a chunk is dropped.
+        if Int(offset) == imageBuffer.count {
+            imageBuffer.append(payload)
+        } else if Int(offset) > imageBuffer.count {
+            let gap = Int(offset) - imageBuffer.count
+            imageBuffer.append(Data(count: gap))
+            imageBuffer.append(payload)
+            print("[BLE] image gap of \(gap)b at offset \(offset)")
+        } else {
+            print("[BLE] image overlap: offset=\(offset) buf=\(imageBuffer.count) — dropped")
+            return
         }
 
-        // Always append everything after the 16-byte header
-        let payload = data.subdata(in: 16 ..< data.count)
-        imageBuffer.append(payload)
-
-        let totalSize = UInt32(data[8]) | (UInt32(data[9]) << 8) | (UInt32(data[10]) << 16) | (UInt32(data[11]) << 24)
         if totalSize > 0 {
             progress = Double(imageBuffer.count) / Double(totalSize)
         }
@@ -310,18 +320,30 @@ extension BLEManager: CBPeripheralDelegate {
     private func handleAudioChunk(_ data: Data) {
         guard data.count > 16 else { return }
         let flags: UInt8 = data[12]
+        let offset = UInt32(data[2]) | (UInt32(data[3]) << 8)
+                   | (UInt32(data[4]) << 16) | (UInt32(data[5]) << 24)
+        let totalSize = UInt32(data[8]) | (UInt32(data[9]) << 8)
+                      | (UInt32(data[10]) << 16) | (UInt32(data[11]) << 24)
 
-        if flags & kFlagFirst != 0 {
+        if offset == 0 {
             audioBuffer = Data()
             audioChunkCount = 0
         }
         audioChunkCount += 1
 
         let payload = data.subdata(in: 16 ..< data.count)
-        audioBuffer.append(payload)
+        if Int(offset) == audioBuffer.count {
+            audioBuffer.append(payload)
+        } else if Int(offset) > audioBuffer.count {
+            let gap = Int(offset) - audioBuffer.count
+            audioBuffer.append(Data(count: gap))
+            audioBuffer.append(payload)
+            print("[BLE] audio gap of \(gap)b at offset \(offset)")
+        } else {
+            print("[BLE] audio overlap: offset=\(offset) buf=\(audioBuffer.count) — dropped")
+            return
+        }
 
-        let totalSize = UInt32(data[8]) | (UInt32(data[9]) << 8)
-                      | (UInt32(data[10]) << 16) | (UInt32(data[11]) << 24)
         lastTransferInfo = "Audio chunk #\(audioChunkCount): \(audioBuffer.count)/\(totalSize)b"
 
         if flags & kFlagLast != 0 {
