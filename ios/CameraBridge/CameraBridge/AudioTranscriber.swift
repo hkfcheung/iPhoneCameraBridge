@@ -22,7 +22,6 @@ actor AudioTranscriber {
 
     func transcribe(pcm: Data, sampleRate: Double) async -> String? {
         logLevels(pcm: pcm)
-        dumpWAV(pcm: pcm, sampleRate: sampleRate)
 
         guard await ensureAuthorized() else { return nil }
         guard let recognizer, recognizer.isAvailable else {
@@ -30,31 +29,19 @@ actor AudioTranscriber {
             return nil
         }
 
-        guard let format = AVAudioFormat(commonFormat: .pcmFormatInt16,
-                                         sampleRate: sampleRate,
-                                         channels: 1,
-                                         interleaved: true) else {
+        // Write PCM to a WAV file and hand it to SFSpeechURLRecognitionRequest.
+        // This sidesteps the AVAudioPCMBuffer mDataByteSize bug seen with
+        // Int16/interleaved/mono buffers on iOS 26.
+        guard let url = writeWAV(pcm: pcm, sampleRate: sampleRate) else {
+            print("[Transcriber] wav write failed")
             return nil
-        }
-        let frameCount = AVAudioFrameCount(pcm.count / 2)
-        guard frameCount > 0,
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
-            return nil
-        }
-        buffer.frameLength = frameCount
-        pcm.withUnsafeBytes { raw in
-            guard let src = raw.baseAddress?.assumingMemoryBound(to: Int16.self),
-                  let dst = buffer.int16ChannelData?.pointee else { return }
-            dst.update(from: src, count: Int(frameCount))
         }
 
-        let request = SFSpeechAudioBufferRecognitionRequest()
+        let request = SFSpeechURLRecognitionRequest(url: url)
         request.shouldReportPartialResults = false
         if #available(iOS 13.0, *) {
             request.requiresOnDeviceRecognition = true
         }
-        request.append(buffer)
-        request.endAudio()
 
         return await withCheckedContinuation { (cont: CheckedContinuation<String?, Never>) in
             var finished = false
@@ -68,10 +55,12 @@ actor AudioTranscriber {
                 }
                 if let result = result, result.isFinal {
                     finished = true
-                    cont.resume(returning: result.bestTranscription.formattedString)
+                    let text = result.bestTranscription.formattedString
+                    print("[Transcriber] final: \"\(text)\"")
+                    cont.resume(returning: text)
                 }
             }
-            _ = task  // keep reference alive until callback fires
+            _ = task
         }
     }
 
@@ -102,11 +91,12 @@ actor AudioTranscriber {
                      count, peak, peakDb, rms, rmsDb))
     }
 
-    /// Write the received PCM to Documents/last_capture.wav so we can listen to
-    /// it via Xcode → Window → Devices & Simulators → Download Container.
-    private nonisolated func dumpWAV(pcm: Data, sampleRate: Double) {
+    /// Write PCM to Documents/last_capture.wav. Returns the URL on success,
+    /// nil on failure. Also the fallback source used for transcription.
+    @discardableResult
+    private nonisolated func writeWAV(pcm: Data, sampleRate: Double) -> URL? {
         guard let docs = FileManager.default.urls(for: .documentDirectory,
-                                                  in: .userDomainMask).first else { return }
+                                                  in: .userDomainMask).first else { return nil }
         let url = docs.appendingPathComponent("last_capture.wav")
 
         var header = Data()
@@ -134,8 +124,10 @@ actor AudioTranscriber {
         do {
             try out.write(to: url)
             print("[Transcriber] wrote \(out.count) bytes to \(url.lastPathComponent)")
+            return url
         } catch {
             print("[Transcriber] wav write failed: \(error.localizedDescription)")
+            return nil
         }
     }
 }
